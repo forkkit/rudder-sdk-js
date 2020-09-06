@@ -21,7 +21,7 @@ import * as Fullstory from "./Fullstory";
 // (config-plan name, native destination.name , exported integration name(this one below))
 
 const integrations = {
-  HS: HubSpot.default,
+  /* HS: HubSpot.default,
   GA: GA.default,
   HOTJAR: Hotjar.default,
   GOOGLEADS: GoogleAds.default,
@@ -38,7 +38,7 @@ const integrations = {
   LOTAME: Lotame.default,
   OPTIMIZELY: Optimizely.default,
   BUGSNAG: Bugsnag.default,
-  FULLSTORY: Fullstory.default,
+  FULLSTORY: Fullstory.default, */
 };
 
 export { integrations };
