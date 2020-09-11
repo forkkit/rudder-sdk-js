@@ -84,8 +84,17 @@ class Analytics {
     this.loaded = false;
 
     this.pluginMap = {
-      GA: "GAPlugin"
+      GA: "GAPlugin",
+      HS: "HSPlugin"
     }
+
+    this.globalQueue = [];
+    this.pauseProcessQueue = false;
+    this.clientRequiredIntegrations = [];
+    //this.globalQueue.on(this.processGlobalQueue);
+
+    this.globalQueueEmitter = new Emitter;
+    this.globalQueueEmitter.on("process", this.processGlobalQueue.bind(this));
 
   }
 
@@ -117,6 +126,19 @@ class Analytics {
     this.storage.setGroupId(this.groupId);
     this.storage.setUserTraits(this.userTraits);
     this.storage.setGroupTraits(this.groupTraits);
+  }
+
+  //processQueueInterval  = setInterval(this.processGlobalQueue, 1000);
+
+  processGlobalQueue(object){
+    while(!this.pauseProcessQueue && this.globalQueue.length > 0){
+      const element = [...this.globalQueue[0]];
+      const method = element[0];
+      element.shift();
+      this.globalQueue.shift();
+      this[method](...element);
+      
+    }
   }
 
   /**
@@ -163,8 +185,10 @@ class Analytics {
         //return integrations[intg.name] != undefined;
         return this.pluginMap[intg.name] != undefined;
       });
+      this.emitGlobalQueue();
 
-      this.init(this.clientIntegrations);
+      // place it under require
+      // this.init(this.clientIntegrations);
     } catch (error) {
       handleError(error);
       logger.debug("===handling config BE response processing error===");
@@ -179,6 +203,22 @@ class Analytics {
     }
   }
 
+  requireIntegration() {
+    this.globalQueue.unshift(
+      ["requirePlugin"].concat(Array.prototype.slice.call(arguments))
+    );
+    //Emitter(this.globalQueue);
+    this.globalQueueEmitter.emit("process");
+  }
+
+  requirePlugin(integrationName) {
+    if(this.clientRequiredIntegrations.indexOf(integrationName) < 0){
+      this.pauseProcessQueue = true;
+      this.clientRequiredIntegrations.push(integrationName);
+      this.init(this.clientIntegrations, integrationName);
+    }
+  }
+
   /**
    * Initialize integrations by addinfg respective scripts
    * keep the instances reference in core
@@ -187,9 +227,9 @@ class Analytics {
    * @returns
    * @memberof Analytics
    */
-  init(intgArray) {
+  init(intgArray, integrationName) {
     const self = this;
-    logger.debug("supported intgs ", integrations);
+    //logger.debug("supported intgs ", integrations);
     // this.clientIntegrationObjects = [];
 
     if (!intgArray || intgArray.length == 0) {
@@ -200,7 +240,7 @@ class Analytics {
       return;
     }
 
-    function processAfterLoadingIntegration(status, response) {
+    /* function processAfterLoadingIntegration(status, response) {
       const intgClass = window[pluginName];//window.GaPlugin;
         const destConfig = intg.config;
         const intgInstance = new intgClass(destConfig, self);
@@ -209,7 +249,7 @@ class Analytics {
         logger.debug("initializing destination: ", intg);
 
         this.isInitialized(intgInstance).then(this.replayEvents);
-    }
+    } */
 
     let getIntegration = (integrationSource, sourceConfigObject, callback) => {
       const cb_ = callback.bind(this);
@@ -231,7 +271,7 @@ class Analytics {
       xhrObj.send('');
     }
 
-    let callback = (response, intg) => {
+    let processAfterLoadingIntegration = (response, intg) => {
 
       var pluginName = this.pluginMap[intg.name];
       var se = document.createElement('script');
@@ -249,7 +289,11 @@ class Analytics {
       this.isInitialized(intgInstance).then(this.replayEvents);
     }
 
-    intgArray.forEach((intg) => {
+    let intgArr = intgArray.filter((intgObject) => {
+      return (intgObject.name == integrationName)
+    })
+    if (intgArr && intgArr.length > 0 ) {
+      let intg = intgArr[0];
       try {
         logger.debug(
           "[Analytics] init :: trying to initialize integration name:: ",
@@ -260,7 +304,9 @@ class Analytics {
         var pluginName = this.pluginMap[intg.name];
         var integrationSource = `http://localhost:2222/dist/${pluginName}.js`
 
-        getIntegration(integrationSource, intg, callback);
+        if(!window[pluginName]) {
+          getIntegration(integrationSource, intg, processAfterLoadingIntegration);
+        }
 
         /* var xhrObj = new XMLHttpRequest();
         // open and send a synchronous request
@@ -286,8 +332,19 @@ class Analytics {
           "[Analytics] initialize integration (integration.init()) failed :: ",
           intg.name
         );
+        //this.pauseProcessQueue = false;
+        this.emitGlobalQueue();
       }
-    });
+    } else {
+      //this.pauseProcessQueue = false;
+      this.emitGlobalQueue();
+    }
+  }
+
+  emitGlobalQueue(){
+    this.pauseProcessQueue = false;
+    //Emitter(this.globalQueue);
+    this.globalQueueEmitter.emit("process");
   }
 
   // eslint-disable-next-line class-methods-use-this
@@ -295,7 +352,8 @@ class Analytics {
     if (
       object.successfullyLoadedIntegration.length +
         object.failedToBeLoadedIntegration.length ===
-      object.clientIntegrations.length
+        object.clientRequiredIntegrations.length
+      //object.clientIntegrations.length
     ) {
       logger.debug(
         "===replay events called====",
@@ -323,7 +381,7 @@ class Analytics {
         logger.debug("===looping over each successful integration====");
         if (!intg.isReady || intg.isReady()) {
           logger.debug("===letting know I am ready=====", intg.name);
-          object.emit("ready");
+          //object.emit("ready");
         }
       });
 
@@ -379,6 +437,7 @@ class Analytics {
         });
         object.toBeProcessedByIntegrationArray = [];
       }
+      object.emitGlobalQueue();
     }
   }
 
@@ -950,6 +1009,7 @@ class Analytics {
       }
     }
     try {
+      this.pauseProcessQueue = true;
       getJSONTrimmed(this, configUrl, writeKey, this.processResponse);
     } catch (error) {
       handleError(error);
@@ -1025,6 +1085,21 @@ class Analytics {
       "//pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"
     );
   }
+
+  pseudoTrack(){
+    this.globalQueue.push(
+      ["track"].concat(Array.prototype.slice.call(arguments))
+    );
+    //Emitter(this.globalQueue);
+    this.globalQueueEmitter.emit("process");
+  }
+  pseudoPage(){
+    this.globalQueue.push(
+      ["page"].concat(Array.prototype.slice.call(arguments))
+    );
+    //Emitter(this.globalQueue);
+    this.globalQueueEmitter.emit("process");
+  }
 }
 
 const instance = new Analytics();
@@ -1069,19 +1144,33 @@ if (
   argumentsArray.shift();
 }
 
+/* if (
+  argumentsArray &&
+  argumentsArray.length > 0 &&
+  argumentsArray[0][0] === "requirePlugin"
+) {
+  const method = argumentsArray[0][0];
+  argumentsArray[0].shift();
+  logger.debug("=====from init, calling method:: ", method);
+  instance[method](...argumentsArray[0]);
+  argumentsArray.shift();
+} */
+
 if (eventsPushedAlready && argumentsArray && argumentsArray.length > 0) {
   for (let i = 0; i < argumentsArray.length; i++) {
-    instance.toBeProcessedArray.push(argumentsArray[i]);
+    //instance.toBeProcessedArray.push(argumentsArray[i]);
+    instance.globalQueue.push(argumentsArray[i]);
   }
+  instance.globalQueueEmitter.emit("process");
 
-  for (let i = 0; i < instance.toBeProcessedArray.length; i++) {
+  /* for (let i = 0; i < instance.toBeProcessedArray.length; i++) {
     const event = [...instance.toBeProcessedArray[i]];
     const method = event[0];
     event.shift();
     logger.debug("=====from init, calling method:: ", method);
     instance[method](...event);
   }
-  instance.toBeProcessedArray = [];
+  instance.toBeProcessedArray = []; */
 }
 // }
 
@@ -1096,6 +1185,9 @@ const load = instance.load.bind(instance);
 const initialized = (instance.initialized = true);
 const getAnonymousId = instance.getAnonymousId.bind(instance);
 const setAnonymousId = instance.setAnonymousId.bind(instance);
+const requireIntegration = instance.requireIntegration.bind(instance);
+const pseudoTrack = instance.pseudoTrack.bind(instance);
+const pseudoPage = instance.pseudoPage.bind(instance);
 
 export {
   initialized,
@@ -1109,4 +1201,7 @@ export {
   group,
   getAnonymousId,
   setAnonymousId,
+  requireIntegration,
+  pseudoTrack,
+  pseudoPage
 };
